@@ -1,0 +1,10 @@
+# Normaliza line endings: LF no repositório, nativo no working copy.
+# Sem isto, quem desenvolve no Windows gera diffs onde o arquivo inteiro
+# aparece como alterado.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.ico binary
+
+composer.lock linguist-generated=true

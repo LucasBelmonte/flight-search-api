@@ -1,0 +1,613 @@
+openapi: 3.1.0
+
+info:
+  title: Flight Search API
+  version: 1.0.0
+  description: |
+    API de busca de passagens aéreas.
+
+    As ofertas vêm de uma cadeia de providers com failover automático
+    (Skyscanner → Duffel → Fake). Quando um provider estoura o rate limit,
+    o próximo assume sem que o cliente perceba. O campo `meta.provider`
+    informa qual fonte respondeu.
+
+    Autenticação é Sanctum em modo SPA: cookie de sessão httpOnly + CSRF.
+    Não há token no corpo da resposta — por decisão de segurança, nada
+    que sirva de credencial é acessível a JavaScript.
+  license:
+    name: MIT
+    identifier: MIT
+
+servers:
+  - url: http://flight-search-api.test
+    description: Local (Laravel Herd)
+
+tags:
+  - name: Flights
+    description: Busca de ofertas na cadeia de providers, com failover automático.
+  - name: Airports
+    description: Consulta à base local de aeroportos. Não consome quota externa.
+  - name: Auth
+    description: Registro, login e sessão via Sanctum em modo SPA.
+  - name: Favorites
+    description: Voos favoritados e histórico de buscas do usuário autenticado.
+
+paths:
+  /api/v1/flights/search:
+    post:
+      tags: [Flights]
+      summary: Busca ofertas de voo
+      description: |
+        Consulta a cadeia de providers em ordem e devolve as ofertas normalizadas.
+        Resultados são cacheados por 5 minutos por combinação de critérios.
+
+        Rate limit próprio: 20 requisições por minuto por usuário e por IP,
+        porque cada chamada consome quota de API externa paga.
+      operationId: searchFlights
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FlightSearchCriteria'
+      responses:
+        '200':
+          description: Ofertas encontradas (pode ser lista vazia)
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/FlightOffer'
+                  meta:
+                    $ref: '#/components/schemas/SearchMeta'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/ProvidersUnavailable'
+
+  /api/v1/airports:
+    get:
+      tags: [Airports]
+      summary: Busca aeroportos por nome, cidade ou código IATA
+      description: |
+        Consulta a tabela local `airports`. Não consome quota de provider externo —
+        por isso o autocomplete pode chamar livremente a cada tecla digitada.
+      operationId: searchAirports
+      security: []
+      parameters:
+        - name: q
+          in: query
+          required: true
+          description: Termo de busca (mínimo 2 caracteres)
+          schema:
+            type: string
+            minLength: 2
+            maxLength: 64
+          example: guarul
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 20
+            default: 10
+      responses:
+        '200':
+          description: Aeroportos correspondentes
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Airport'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+
+  /api/v1/auth/register:
+    post:
+      tags: [Auth]
+      summary: Cria uma conta
+      operationId: register
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, email, password, password_confirmation]
+              properties:
+                name:
+                  type: string
+                  maxLength: 255
+                email:
+                  type: string
+                  format: email
+                password:
+                  type: string
+                  minLength: 12
+                  description: Mínimo de 12 caracteres, verificada contra vazamentos conhecidos
+                password_confirmation:
+                  type: string
+      responses:
+        '201':
+          $ref: '#/components/responses/AuthenticatedUser'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+
+  /api/v1/auth/login:
+    post:
+      tags: [Auth]
+      summary: Autentica e inicia a sessão
+      description: |
+        Requer que o cliente tenha chamado `GET /sanctum/csrf-cookie` antes.
+        A resposta define o cookie de sessão httpOnly — nenhum token é devolvido no corpo.
+      operationId: login
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email:
+                  type: string
+                  format: email
+                password:
+                  type: string
+      responses:
+        '200':
+          $ref: '#/components/responses/AuthenticatedUser'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /api/v1/auth/logout:
+    post:
+      tags: [Auth]
+      summary: Encerra a sessão e invalida o cookie
+      operationId: logout
+      responses:
+        '204':
+          description: Sessão encerrada
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+
+  /api/v1/auth/me:
+    get:
+      tags: [Auth]
+      summary: Dados do usuário autenticado
+      operationId: me
+      responses:
+        '200':
+          $ref: '#/components/responses/AuthenticatedUser'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+
+  /api/v1/favorites:
+    get:
+      tags: [Favorites]
+      summary: Lista os voos favoritados do usuário
+      operationId: listFavorites
+      responses:
+        '200':
+          description: Favoritos do usuário autenticado
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Favorite'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+    post:
+      tags: [Favorites]
+      summary: Favorita uma oferta
+      operationId: createFavorite
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [offer]
+              properties:
+                offer:
+                  $ref: '#/components/schemas/FlightOffer'
+      responses:
+        '201':
+          description: Favorito criado
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Favorite'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+
+  /api/v1/favorites/{favorite}:
+    delete:
+      tags: [Favorites]
+      summary: Remove um favorito
+      description: |
+        Responde 404 — não 403 — quando o favorito pertence a outro usuário,
+        para não revelar a existência do recurso.
+      operationId: deleteFavorite
+      parameters:
+        - name: favorite
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Removido
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/searches/recent:
+    get:
+      tags: [Favorites]
+      summary: Últimas buscas do usuário
+      operationId: recentSearches
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 20
+            default: 5
+      responses:
+        '200':
+          description: Buscas recentes, da mais nova para a mais antiga
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/RecentSearch'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+
+components:
+  securitySchemes:
+    sanctumSession:
+      type: apiKey
+      in: cookie
+      name: laravel_session
+      description: Cookie de sessão httpOnly emitido pelo Sanctum em modo SPA.
+
+  schemas:
+    FlightSearchCriteria:
+      type: object
+      required: [origin, destination, departure_date, adults]
+      properties:
+        origin:
+          type: string
+          minLength: 3
+          maxLength: 3
+          pattern: '^[A-Z]{3}$'
+          description: Código IATA de origem
+          example: GRU
+        destination:
+          type: string
+          minLength: 3
+          maxLength: 3
+          pattern: '^[A-Z]{3}$'
+          description: Código IATA de destino, diferente da origem
+          example: LIS
+        departure_date:
+          type: string
+          format: date
+          description: Data de ida, hoje ou futura
+          example: '2026-10-15'
+        return_date:
+          type: [string, 'null']
+          format: date
+          description: Data de volta. Ausente ou nulo significa somente ida.
+          example: '2026-10-28'
+        adults:
+          type: integer
+          minimum: 1
+          maximum: 9
+          default: 1
+        children:
+          type: integer
+          minimum: 0
+          maximum: 8
+          default: 0
+        cabin:
+          $ref: '#/components/schemas/CabinClass'
+        currency:
+          type: string
+          minLength: 3
+          maxLength: 3
+          default: BRL
+          example: BRL
+
+    CabinClass:
+      type: string
+      enum: [economy, premium_economy, business, first]
+      default: economy
+
+    FlightOffer:
+      type: object
+      required: [id, price, currency, itineraries, seats_remaining]
+      properties:
+        id:
+          type: string
+          description: Identificador da oferta, estável dentro do TTL do cache
+        price:
+          type: number
+          format: float
+          minimum: 0
+          example: 3847.9
+        currency:
+          type: string
+          example: BRL
+        seats_remaining:
+          type: [integer, 'null']
+          minimum: 0
+        cabin:
+          $ref: '#/components/schemas/CabinClass'
+        itineraries:
+          type: array
+          minItems: 1
+          maxItems: 2
+          description: Um item para somente ida, dois para ida e volta
+          items:
+            $ref: '#/components/schemas/Itinerary'
+
+    Itinerary:
+      type: object
+      required: [duration_minutes, segments]
+      properties:
+        duration_minutes:
+          type: integer
+          minimum: 0
+          description: Duração total incluindo conexões
+        segments:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/Segment'
+
+    Segment:
+      type: object
+      required:
+        [origin, destination, departure_at, arrival_at, carrier_code, flight_number, duration_minutes]
+      properties:
+        origin:
+          type: string
+          pattern: '^[A-Z]{3}$'
+        destination:
+          type: string
+          pattern: '^[A-Z]{3}$'
+        departure_at:
+          type: string
+          format: date-time
+          description: ISO 8601 com offset do fuso local do aeroporto de origem
+        arrival_at:
+          type: string
+          format: date-time
+        carrier_code:
+          type: string
+          minLength: 2
+          maxLength: 3
+          example: TP
+        carrier_name:
+          type: [string, 'null']
+          example: TAP Air Portugal
+        flight_number:
+          type: string
+          example: '1234'
+        aircraft:
+          type: [string, 'null']
+          example: Airbus A330
+        duration_minutes:
+          type: integer
+          minimum: 0
+
+    SearchMeta:
+      type: object
+      required: [provider, cached, total]
+      properties:
+        provider:
+          type: string
+          enum: [skyscanner, duffel, fake]
+          description: Qual provider da cadeia respondeu. Útil em depuração.
+        cached:
+          type: boolean
+          description: Se a resposta veio do cache em vez de chamada externa
+        total:
+          type: integer
+          minimum: 0
+        currency:
+          type: string
+          example: BRL
+
+    Airport:
+      type: object
+      required: [iata_code, name, city, country_code]
+      properties:
+        iata_code:
+          type: string
+          pattern: '^[A-Z]{3}$'
+          example: GRU
+        name:
+          type: string
+          example: Aeroporto Internacional de São Paulo/Guarulhos
+        city:
+          type: string
+          example: São Paulo
+        country_code:
+          type: string
+          pattern: '^[A-Z]{2}$'
+          example: BR
+        timezone:
+          type: [string, 'null']
+          example: America/Sao_Paulo
+
+    User:
+      type: object
+      required: [id, name, email]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        email:
+          type: string
+          format: email
+
+    Favorite:
+      type: object
+      required: [id, offer, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        offer:
+          $ref: '#/components/schemas/FlightOffer'
+        created_at:
+          type: string
+          format: date-time
+
+    RecentSearch:
+      type: object
+      required: [id, criteria, searched_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        criteria:
+          $ref: '#/components/schemas/FlightSearchCriteria'
+        searched_at:
+          type: string
+          format: date-time
+
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              enum:
+                - VALIDATION_FAILED
+                - UNAUTHENTICATED
+                - FORBIDDEN
+                - NOT_FOUND
+                - RATE_LIMITED
+                - PROVIDERS_UNAVAILABLE
+            message:
+              type: string
+              description: Mensagem em português, segura para exibir ao usuário
+            details:
+              type: object
+              additionalProperties: true
+              description: Erros por campo na validação; vazio nos demais casos
+
+  responses:
+    AuthenticatedUser:
+      description: Usuário autenticado
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [data]
+            properties:
+              data:
+                $ref: '#/components/schemas/User'
+
+    ValidationFailed:
+      description: Dados inválidos
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              code: VALIDATION_FAILED
+              message: Verifique os campos destacados.
+              details:
+                destination: [O destino deve ser diferente da origem.]
+
+    Unauthenticated:
+      description: Sessão ausente ou expirada
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+    NotFound:
+      description: Recurso inexistente ou de outro usuário
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+    RateLimited:
+      description: Limite de requisições excedido
+      headers:
+        Retry-After:
+          schema:
+            type: integer
+          description: Segundos até poder tentar de novo
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+    ProvidersUnavailable:
+      description: |
+        Todos os providers da cadeia falharam. A mensagem nunca revela qual
+        fornecedor falhou nem por quê — esse detalhe fica no log.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              code: PROVIDERS_UNAVAILABLE
+              message: Não foi possível consultar voos no momento. Tente novamente em instantes.
+              details: {}
+
+security:
+  - sanctumSession: []

@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Testes e análise estática
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configurar PHP 8.4
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          extensions: mbstring, pdo_sqlite, bcmath, intl
+          coverage: xdebug
+
+      - name: Cache do Composer
+        uses: actions/cache@v4
+        with:
+          path: vendor
+          key: composer-${{ hashFiles('composer.lock') }}
+          restore-keys: composer-
+
+      - name: Instalar dependências
+        run: composer install --prefer-dist --no-progress --no-interaction
+
+      - name: Preparar ambiente
+        run: |
+          cp .env.example .env
+          php artisan key:generate
+          touch database/database.sqlite
+          php artisan migrate --force
+
+      - name: Verificar formatação
+        run: vendor/bin/pint --test
+
+      - name: Análise estática
+        run: vendor/bin/phpstan analyse --memory-limit=512M --no-progress
+
+      # O FakeProvider é o único usado aqui: nenhum teste toca a rede, e
+      # Http::preventStrayRequests() no Pest.php garante isso.
+      - name: Testes
+        env:
+          FLIGHT_PROVIDERS: fake
+        run: php artisan test --coverage --min=80
+
+  contract:
+    name: Contrato OpenAPI
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # O contrato precisa ser válido antes de qualquer merge: o repo do
+      # frontend gera os tipos dele a partir deste arquivo, e um YAML quebrado
+      # só apareceria lá — no repositório errado, com a pessoa errada.
+      - name: Validar openapi.yaml
+        run: npx -y @redocly/cli@latest lint openapi.yaml --format=stylish
