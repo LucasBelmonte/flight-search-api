@@ -5,9 +5,31 @@ API de busca de passagens aéreas. Laravel 13, PHP 8.4, Sanctum em modo SPA.
 Consome uma **cadeia de providers com failover automático**: quando o provider primário estoura o rate
 limit, o próximo assume sem que o usuário final veja erro.
 
-> **Estado atual:** este repositório contém o contrato (`openapi.yaml`), as decisões de arquitetura
-> (`docs/adr/`) e a configuração de agentes e hooks. O código Laravel ainda não foi gerado porque depende
-> do PHP — rode o bootstrap abaixo depois de instalar o Herd.
+## Status
+
+> **O código Laravel ainda não existe.** Este repositório contém o contrato, as decisões de arquitetura e
+> a estrutura de trabalho; o esqueleto é gerado pelo bootstrap depois que o PHP estiver instalado.
+
+**Pronto:** contrato OpenAPI 3.1 completo e validado (busca, aeroportos, autenticação, favoritos) · ADR da
+cadeia de provedores com failover, circuit breaker e política de cache · `scripts/bootstrap.ps1` · CI ·
+agentes, skills e hooks versionados.
+
+**Pendente, em ordem de execução:**
+
+| O que | Depende de |
+|---|---|
+| Rodar o bootstrap e gerar o esqueleto Laravel | Instalar o [Laravel Herd](https://herd.laravel.com/windows) |
+| Cadeia de provedores com o `FakeProvider` | O item acima |
+| Endpoints de busca e aeroportos | A cadeia |
+| Integração com o Duffel | Token de teste em [app.duffel.com](https://app.duffel.com) |
+| Autenticação Sanctum, favoritos, buscas recentes | Endpoints |
+| Integração com o Skyscanner | Aprovação como parceiro (~2 semanas, sem sandbox público) |
+
+O `FakeProvider` vem antes do Duffel de propósito: com ele o failover fica provado antes de qualquer
+dependência externa entrar na conta.
+
+A interface já está funcionando com dados de exemplo —
+[flight-search-web](https://github.com/LucasBelmonte/flight-search-web).
 
 ## Pré-requisitos
 
@@ -94,12 +116,34 @@ Todo PR que altera o contrato precisa dizer isso no corpo — é a única sincro
   do request.
 - Resposta de provider é entrada não confiável: validada antes de normalizar, nunca repassada crua.
 
+## Desenvolvendo com agentes
+
+O diretório `.claude/` é **versionado**: ao clonar, você já recebe os agentes, as skills e os hooks. Com o
+Claude Code aberto neste repositório, tudo carrega sozinho.
+
+**Agentes** (`.claude/agents/`) — `planner` decide o escopo e muda o contrato antes do código;
+`backend-coder` implementa; `test-engineer` cobre; `security-auditor` audita contra o OWASP API Top 10;
+`code-reviewer` revisa o diff; `git-publisher` abre o PR. Você não precisa chamá-los pelo nome: descreva a
+tarefa e o agente certo é acionado.
+
+**Skills** (`.claude/skills/`) — `laravel-endpoint`, `flight-provider`, `api-contract` e `ship-pr` carregam
+sozinhas quando o trabalho toca a área correspondente, e também podem ser invocadas com `/flight-provider`.
+
+**Hooks** (`.claude/settings.json`) — bloqueiam leitura e escrita de `.env` e de chaves, `git push --force`,
+`--no-verify` e commit direto na `main`; rodam Pint e PHPStan a cada arquivo PHP salvo, devolvendo erro de
+tipo na hora em vez de vinte minutos depois no CI.
+
+O guia completo da arquitetura, incluindo o fluxo entre os dois repositórios, está no README do diretório
+que contém os dois repos.
+
 ## Estrutura
 
 ```
 openapi.yaml              contrato — muda primeiro
 docs/adr/                 decisões de arquitetura
+scripts/bootstrap.ps1     gera o esqueleto Laravel
+.claude/agents/           os agentes de desenvolvimento e revisão
+.claude/skills/           as receitas carregadas por contexto
 .claude/settings.json     hooks de qualidade e segurança
 .claude/hooks/            os scripts que os hooks executam
-scripts/bootstrap.ps1     gera o esqueleto Laravel
 ```
