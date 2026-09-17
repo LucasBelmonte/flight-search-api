@@ -94,12 +94,34 @@ Todo PR que altera o contrato precisa dizer isso no corpo — é a única sincro
   do request.
 - Resposta de provider é entrada não confiável: validada antes de normalizar, nunca repassada crua.
 
+## Desenvolvendo com agentes
+
+O diretório `.claude/` é **versionado**: ao clonar, você já recebe os agentes, as skills e os hooks. Com o
+Claude Code aberto neste repositório, tudo carrega sozinho.
+
+**Agentes** (`.claude/agents/`) — `planner` decide o escopo e muda o contrato antes do código;
+`backend-coder` implementa; `test-engineer` cobre; `security-auditor` audita contra o OWASP API Top 10;
+`code-reviewer` revisa o diff; `git-publisher` abre o PR. Você não precisa chamá-los pelo nome: descreva a
+tarefa e o agente certo é acionado.
+
+**Skills** (`.claude/skills/`) — `laravel-endpoint`, `flight-provider`, `api-contract` e `ship-pr` carregam
+sozinhas quando o trabalho toca a área correspondente, e também podem ser invocadas com `/flight-provider`.
+
+**Hooks** (`.claude/settings.json`) — bloqueiam leitura e escrita de `.env` e de chaves, `git push --force`,
+`--no-verify` e commit direto na `main`; rodam Pint e PHPStan a cada arquivo PHP salvo, devolvendo erro de
+tipo na hora em vez de vinte minutos depois no CI.
+
+O guia completo da arquitetura, incluindo o fluxo entre os dois repositórios, está no README do diretório
+que contém os dois repos.
+
 ## Estrutura
 
 ```
 openapi.yaml              contrato — muda primeiro
 docs/adr/                 decisões de arquitetura
+scripts/bootstrap.ps1     gera o esqueleto Laravel
+.claude/agents/           os agentes de desenvolvimento e revisão
+.claude/skills/           as receitas carregadas por contexto
 .claude/settings.json     hooks de qualidade e segurança
 .claude/hooks/            os scripts que os hooks executam
-scripts/bootstrap.ps1     gera o esqueleto Laravel
 ```
