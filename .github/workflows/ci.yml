@@ -9,8 +9,32 @@ permissions:
   contents: read
 
 jobs:
+  # O esqueleto Laravel só existe depois que alguém roda scripts/bootstrap.ps1,
+  # e até lá não há composer.json para instalar. Sem esta checagem o CI fica
+  # permanentemente vermelho por um motivo esperado — e CI sempre vermelho
+  # ensina todo mundo a ignorar o vermelho, inclusive quando ele for real.
+  detect:
+    name: Detectar projeto PHP
+    runs-on: ubuntu-latest
+    outputs:
+      exists: ${{ steps.check.outputs.exists }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: check
+        run: |
+          if [ -f composer.json ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Esqueleto Laravel ainda não existe. Rode scripts/bootstrap.ps1 para gerá-lo; os testes passam a rodar automaticamente a partir daí."
+          fi
+
   test:
     name: Testes e análise estática
+    needs: detect
+    if: needs.detect.outputs.exists == 'true'
     runs-on: ubuntu-latest
 
     steps:
